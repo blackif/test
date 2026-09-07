@@ -1,0 +1,35 @@
+name: Check Strings
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-strings:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run string check
+        run: python check_strings.py
+
+      - name: Commit updated result
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add result.json
+          if git diff --cached --quiet; then
+            echo "result.json is unchanged"
+          else
+            git commit -m "Update result.json from string check"
+            git push
+          fi
