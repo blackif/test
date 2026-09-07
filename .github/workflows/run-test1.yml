@@ -8,6 +8,9 @@ on:
       - 'test_file/demo1.xlsx'
       - '.github/workflows/run-test1.yml'
 
+permissions:
+  contents: write
+
 jobs:
   run-test1:
     runs-on: ubuntu-latest
