@@ -1,0 +1,40 @@
+name: Run Excel Parser
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'script/test1.py'
+      - 'test_file/demo1.xlsx'
+      - '.github/workflows/run-test1.yml'
+
+jobs:
+  run-test1:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install openpyxl
+
+      - name: Run test1.py
+        run: python script/test1.py
+
+      - name: Commit generated JSON
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add test_file/json_data/demo1.json
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+          else
+            git commit -m "chore: update demo1 json"
+            git push
+          fi
