@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import json
+import posixpath
 import sys
 from pathlib import Path
 from zipfile import ZipFile
-import posixpath
 import xml.etree.ElementTree as ET
 
 from openpyxl import load_workbook
@@ -41,15 +41,16 @@ def resolve_target(source_path: str, target: str) -> str:
     """Resolve an OOXML relationship target to a normalized package path."""
     if target.startswith("/"):
         return target.lstrip("/")
-    return posixpath.normpath(posixpath.join(posixpath.dirname(source_path), target)).lstrip("./")
+    return posixpath.normpath(
+        posixpath.join(posixpath.dirname(source_path), target)
+    ).lstrip("./")
 
 
-def get_sheet_drawing_paths(xlsx_path: Path) -> dict[str, str]:
-    """Map worksheet XML paths to their DrawingML XML paths."""
-    result: dict[str, str] = {}
+def get_sheet_paths(xlsx_path: Path) -> list[tuple[str, str]]:
+    """Return (sheet name, worksheet XML path) in workbook order."""
+    result = []
 
     with ZipFile(xlsx_path) as zf:
-        names = set(zf.namelist())
         workbook = ET.fromstring(zf.read("xl/workbook.xml"))
         workbook_rels = ET.fromstring(zf.read("xl/_rels/workbook.xml.rels"))
         rel_map = {rel.attrib["Id"]: rel.attrib["Target"] for rel in workbook_rels}
@@ -59,34 +60,11 @@ def get_sheet_drawing_paths(xlsx_path: Path) -> dict[str, str]:
             return result
 
         for sheet in sheets:
+            name = sheet.attrib.get("name", "")
             rid = sheet.attrib.get(f"{{{NS_REL}}}id")
             target = rel_map.get(rid)
-            if not target:
-                continue
-
-            sheet_path = resolve_target("xl/workbook.xml", target)
-            if sheet_path not in names:
-                continue
-
-            rels_path = posixpath.join(
-                posixpath.dirname(sheet_path),
-                "_rels",
-                posixpath.basename(sheet_path) + ".rels",
-            )
-            if rels_path not in names:
-                continue
-
-            sheet_rels = ET.fromstring(zf.read(rels_path))
-            for rel in sheet_rels:
-                if rel.attrib.get("Type") != DRAWING_REL_TYPE:
-                    continue
-                drawing_target = rel.attrib.get("Target")
-                if not drawing_target:
-                    continue
-                drawing_path = resolve_target(sheet_path, drawing_target)
-                if drawing_path in names:
-                    result[sheet_path] = drawing_path
-                break
+            if target:
+                result.append((name, resolve_target("xl/workbook.xml", target)))
 
     return result
 
@@ -98,17 +76,40 @@ def get_drawing_texts(xlsx_path: Path) -> dict[str, list[tuple[int, int, str]]]:
     objects are ignored, so text is not extracted from images.
     """
     result: dict[str, list[tuple[int, int, str]]] = {}
-    sheet_drawing_paths = get_sheet_drawing_paths(xlsx_path)
 
     with ZipFile(xlsx_path) as zf:
-        for sheet_path, drawing_path in sheet_drawing_paths.items():
+        names = set(zf.namelist())
+        sheet_paths = get_sheet_paths(xlsx_path)
+
+        for _, sheet_path in sheet_paths:
+            rels_path = posixpath.join(
+                posixpath.dirname(sheet_path),
+                "_rels",
+                posixpath.basename(sheet_path) + ".rels",
+            )
+            if rels_path not in names:
+                continue
+
+            sheet_rels = ET.fromstring(zf.read(rels_path))
+            drawing_path = None
+            for rel in sheet_rels:
+                if rel.attrib.get("Type") == DRAWING_REL_TYPE:
+                    target = rel.attrib.get("Target")
+                    if target:
+                        candidate = resolve_target(sheet_path, target)
+                        if candidate in names:
+                            drawing_path = candidate
+                    break
+
+            if not drawing_path:
+                continue
+
             try:
                 root = ET.fromstring(zf.read(drawing_path))
             except (KeyError, ET.ParseError):
                 continue
 
-            entries = result.setdefault(sheet_path, [])
-
+            entries = []
             for anchor in root:
                 # Only process actual DrawingML shapes/text boxes.
                 shape = anchor.find(f"{{{NS_XDR}}}sp")
@@ -143,8 +144,8 @@ def get_drawing_texts(xlsx_path: Path) -> dict[str, list[tuple[int, int, str]]]:
                 if text:
                     entries.append((line, column, text))
 
-            if not entries:
-                result.pop(sheet_path, None)
+            if entries:
+                result[sheet_path] = entries
 
     return result
 
@@ -155,7 +156,7 @@ def extract_workbook() -> list[dict]:
 
     workbook = load_workbook(XLSX_PATH, data_only=True, read_only=False)
     drawing_texts = get_drawing_texts(XLSX_PATH)
-    sheet_drawing_paths = get_sheet_drawing_paths(XLSX_PATH)
+    sheet_paths = dict(get_sheet_paths(XLSX_PATH))
 
     sheets = []
     for ws in workbook.worksheets:
@@ -172,23 +173,23 @@ def extract_workbook() -> list[dict]:
                     })
 
         # Shape/TextBox text. Use the shape's top-left/start cell.
-        sheet_xml = next(
-            (path for path, drawing_path in sheet_drawing_paths.items()
-             if drawing_path and path.endswith(f"/worksheets/sheet{ws._id}.xml")),
-            None,
-        )
-        if sheet_xml is None:
-            # Fallback: match the worksheet by XML relationship order.
-            sheet_xml = f"xl/worksheets/sheet{ws._id}.xml"
-
+        sheet_xml = sheet_paths.get(ws.title)
         for line, column, text in drawing_texts.get(sheet_xml, []):
             context.append({
                 "cell": f"{column_letter(column)}{line}",
                 "text": text,
             })
 
-        context.sort(key=lambda item: (int(''.join(c for c in item["cell"] if c.isdigit())),
-                                       ''.join(c for c in item["cell"] if c.isalpha())))
+        def sort_key(item):
+            cell = item["cell"]
+            column = "".join(c for c in cell if c.isalpha())
+            line = int("".join(c for c in cell if c.isdigit()))
+            column_number = 0
+            for char in column:
+                column_number = column_number * 26 + ord(char) - 64
+            return line, column_number
+
+        context.sort(key=sort_key)
         sheets.append({
             "name": ws.title,
             "context": context,
