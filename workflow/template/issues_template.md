@@ -1,14 +1,8 @@
-# {{Title}}
-
-## Description
-
-### Main
-
-**Task**
+## 任务
 {{Task}}
 
-**Requirements**
+## 要求
 - {{Requirement}}
 
-**Checklist**
+## 验收条件
 - [ ] {{Checklist item}}
