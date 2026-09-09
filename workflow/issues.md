@@ -13,7 +13,7 @@ Every Issue must contain:
 - `Description.Main.Requirements`: list of strings
 - `Description.Main.Checklist`: list of strings
 
-All fields under `Description.Main` are required. `workflow/data/issues.json` is the authoritative JSON Schema for this structure (it rejects unknown fields and empty lists) and is enforced by `workflow/script/issues.py`.
+All fields under `Description.Main` are required. `workflow/data/issues.json` is a human-readable reference for this structure only (not machine-validated). The actual enforcement (rejecting unknown fields and empty lists) lives in `workflow/script/issues.py` and must be kept in sync with the Rules below.
 
 ## Rules
 
@@ -42,7 +42,7 @@ When creating an Issue:
 4. Write the `Task` as one concise task statement.
 5. Add all required conditions to `Requirements`.
 6. Add concrete verification points to `Checklist`.
-7. Write the drafted data to a temporary JSON file matching the structure in `workflow/data/issues.json`.
+7. Write the drafted data to a temporary JSON file matching the structure in `workflow/data/issues.json` (see the `structure` example there).
 8. Run `python workflow/script/issues.py validate <draft-file>`. If it reports any error, fix the draft and re-run until it prints `VALID`. Do not proceed to the next step until validation passes.
 9. Re-check Rules 1 and 4 by hand (they cannot be validated by the script — see the Rules section above).
 10. Render the content using `workflow/template/issues_template.md`.
