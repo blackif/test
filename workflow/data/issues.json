@@ -1,3 +1,17 @@
 {
-  "issues": []
+  "version": "1.0",
+  "structure": {
+    "Title": "string",
+    "Description": {
+      "Main": {
+        "Task": "string",
+        "Requirements": [
+          "string"
+        ],
+        "Checklist": [
+          "string"
+        ]
+      }
+    }
+  }
 }
