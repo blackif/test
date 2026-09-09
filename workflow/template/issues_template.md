@@ -1,15 +1,14 @@
-# Issue Template
+# {{Title}}
 
-## Objective
+## Description
 
-## Input
+### Main
 
-## Tasks
+**Task**
+{{Task}}
 
-## Expected Output
+**Requirements**
+- {{Requirement}}
 
-## Acceptance Criteria
-
-## Questions / Blockers
-
-## Review
+**Checklist**
+- [ ] {{Checklist item}}
