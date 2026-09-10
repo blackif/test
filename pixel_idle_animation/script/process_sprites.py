@@ -51,23 +51,40 @@ def extract_frames(sheet: Image.Image, output_dir: Path) -> list[Path]:
 
 
 def make_gif(frame_paths: list[Path], gif_path: Path) -> None:
-    """Create a looping GIF with a transparent background."""
-    frames = [Image.open(path).convert("RGBA") for path in frame_paths]
-
-    # GIF transparency is binary. Convert alpha below 128 to transparent.
+    """Create a looping GIF with a real transparent palette entry."""
     prepared: list[Image.Image] = []
-    for frame in frames:
-        rgba = frame.copy()
+    for path in frame_paths:
+        rgba = Image.open(path).convert("RGBA")
         alpha = rgba.getchannel("A")
+        # GIF supports binary transparency, so alpha below 128 becomes transparent.
         rgba.putalpha(alpha.point(lambda a: 255 if a >= 128 else 0))
         prepared.append(rgba)
 
     paletted: list[Image.Image] = []
+    transparent_rgb = (255, 0, 255)
+
     for rgba in prepared:
-        transparent_rgb = (255, 0, 255)
         rgb = Image.new("RGB", rgba.size, transparent_rgb)
         rgb.paste(rgba.convert("RGB"), mask=rgba.getchannel("A"))
         p = rgb.quantize(colors=255, method=Image.Quantize.MEDIANCUT)
+
+        # The top-left pixel is inside the required transparent padding, so its
+        # palette index identifies the transparent color. Swap it to index 0.
+        transparent_index = p.getpixel((0, 0))
+        if transparent_index != 0:
+            palette = p.getpalette()
+            a = transparent_index * 3
+            b = 0
+            palette[a:a + 3], palette[b:b + 3] = palette[b:b + 3], palette[a:a + 3]
+            p.putpalette(palette)
+            pixels = p.load()
+            for y in range(p.height):
+                for x in range(p.width):
+                    if pixels[x, y] == transparent_index:
+                        pixels[x, y] = 0
+                    elif pixels[x, y] == 0:
+                        pixels[x, y] = transparent_index
+
         p.info["transparency"] = 0
         paletted.append(p)
 
