@@ -4,7 +4,7 @@ import math
 import shutil
 import sys
 import zipfile
-from collections import Counter, deque
+from collections import deque
 from pathlib import Path
 
 from PIL import Image
@@ -25,6 +25,7 @@ CHECKER_COLOR_DISTANCE = 28
 CHECKER_MIN_LIGHTNESS = 150
 CHECKER_MIN_BORDER_RATIO = 0.20
 CHECKER_SAMPLE_STEP = 4
+CHECKER_QUANT_STEP = 8  # bucket size used to cluster near-duplicate colors before counting
 
 
 def color_distance(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
@@ -33,6 +34,33 @@ def color_distance(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
 
 def is_light_neutral(rgb: tuple[int, int, int]) -> bool:
     return min(rgb) >= CHECKER_MIN_LIGHTNESS and max(rgb) - min(rgb) <= 25
+
+
+def _cluster_colors(
+    colors: list[tuple[int, int, int]], step: int
+) -> list[tuple[tuple[int, int, int], int]]:
+    """Group near-duplicate colors (anti-aliasing/compression noise) into buckets.
+
+    Returns (average_color, count) pairs sorted by count descending. Colors are
+    bucketed by rounding each channel to the nearest `step`, then the true average
+    color of each bucket is used as its representative value so downstream distance
+    checks stay accurate even though the grouping key is coarse.
+    """
+    buckets: dict[tuple[int, int, int], list[int]] = {}
+    for color in colors:
+        key = tuple(v // step for v in color)
+        acc = buckets.setdefault(key, [0, 0, 0, 0])  # r_sum, g_sum, b_sum, count
+        acc[0] += color[0]
+        acc[1] += color[1]
+        acc[2] += color[2]
+        acc[3] += 1
+
+    clusters = []
+    for r_sum, g_sum, b_sum, count in buckets.values():
+        avg = (r_sum // count, g_sum // count, b_sum // count)
+        clusters.append((avg, count))
+    clusters.sort(key=lambda item: item[1], reverse=True)
+    return clusters
 
 
 def detect_checker_colors(image: Image.Image) -> tuple[tuple[int, int, int], tuple[int, int, int]] | None:
@@ -55,20 +83,26 @@ def detect_checker_colors(image: Image.Image) -> tuple[tuple[int, int, int], tup
     if not neutral:
         return None
 
-    counts = Counter(neutral)
-    candidates = [color for color, _ in counts.most_common(20)]
-    if len(candidates) < 2:
+    # Anti-aliasing/compression noise fragments each checker color into many
+    # near-duplicate shades (e.g. (254,254,254), (253,253,253), (252,252,252)...).
+    # Cluster them by a coarse quantization step before ranking by frequency,
+    # otherwise no single shade clears CHECKER_MIN_BORDER_RATIO even though the
+    # checkerboard visually covers a large share of the border.
+    clusters = _cluster_colors(neutral, CHECKER_QUANT_STEP)
+    if len(clusters) < 2:
         return None
 
-    first = candidates[0]
-    if counts[first] / len(samples) < CHECKER_MIN_BORDER_RATIO:
+    first, first_count = clusters[0]
+    if first_count / len(samples) < CHECKER_MIN_BORDER_RATIO:
         return None
 
-    second = next(
-        (candidate for candidate in candidates[1:] if color_distance(first, candidate) >= 20),
-        None,
-    )
-    if second is None or counts[second] / len(samples) < CHECKER_MIN_BORDER_RATIO:
+    second = None
+    second_count = 0
+    for candidate, count in clusters[1:]:
+        if color_distance(first, candidate) >= 20:
+            second, second_count = candidate, count
+            break
+    if second is None or second_count / len(samples) < CHECKER_MIN_BORDER_RATIO:
         return None
 
     distance = color_distance(first, second)
